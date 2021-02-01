@@ -19,16 +19,87 @@
  */
 package org.sonar.java.checks;
 
-import java.util.Collections;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import org.sonar.check.Rule;
-import org.sonar.plugins.java.api.IssuableSubscriptionVisitor;
+import org.sonar.java.checks.methods.AbstractMethodDetection;
+import org.sonar.plugins.java.api.semantic.MethodMatchers;
+import org.sonar.plugins.java.api.tree.Arguments;
+import org.sonar.plugins.java.api.tree.BaseTreeVisitor;
+import org.sonar.plugins.java.api.tree.ExpressionTree;
+import org.sonar.plugins.java.api.tree.LiteralTree;
+import org.sonar.plugins.java.api.tree.MethodInvocationTree;
+import org.sonar.plugins.java.api.tree.NewArrayTree;
 import org.sonar.plugins.java.api.tree.Tree;
 
 @Rule(key = "S4036")
-public class OSCommandsPathCheck extends IssuableSubscriptionVisitor {
+public class OSCommandsPathCheck extends AbstractMethodDetection {
+  private static final MethodMatchers EXEC_MATCHER = MethodMatchers.create()
+    .ofTypes("java.lang.Runtime")
+    .names("exec")
+    .addParametersMatcher("java.lang.String")
+    .addParametersMatcher("java.lang.String[]")
+    .build();
+
+  private static final List<String> STARTS = Arrays.asList(
+    "/",
+    "./",
+    "../",
+    "\\",
+    ".\\",
+    "..\\"
+  );
+  private static final String MESSAGE = "Make sure the \"PATH\" used to find this command includes only what you intend.";
+
   @Override
-  public List<Tree.Kind> nodesToVisit() {
-    return Collections.emptyList();
+  protected MethodMatchers getMethodInvocationMatchers() {
+    return EXEC_MATCHER;
+  }
+
+  private static boolean isCompliant(String command) {
+    return STARTS.stream().anyMatch(command::startsWith);
+  }
+
+  @Override
+  protected void onMethodInvocationFound(MethodInvocationTree tree) {
+    Arguments arguments = tree.arguments();
+    ExpressionTree expressionTree = arguments.get(0);
+    if (expressionTree.is(Tree.Kind.STRING_LITERAL)) {
+      Optional<String> command = expressionTree.asConstant(String.class);
+      if (!command.isPresent() || isCompliant(command.get())) {
+        return;
+      }
+      reportIssue(tree, MESSAGE);
+    } else if (expressionTree.is(Tree.Kind.NEW_ARRAY)) {
+      NewArrayTree newArray = (NewArrayTree) expressionTree;
+      if (!newArray.symbolType().is("java.lang.String[]")) {
+        return;
+      }
+      NewArrayArgumentVisitor visitor = new NewArrayArgumentVisitor();
+      newArray.accept(visitor);
+      if (visitor.isCompliant) {
+        return;
+      }
+      reportIssue(tree, MESSAGE);
+    }
+  }
+
+  static class NewArrayArgumentVisitor extends BaseTreeVisitor {
+    private boolean visited = false;
+    private boolean isCompliant = false;
+
+    @Override
+    public void visitLiteral(LiteralTree tree) {
+      if (visited) {
+        return;
+      }
+      visited = true;
+      Optional<String> command = tree.asConstant(String.class);
+      if (!command.isPresent()) {
+        return;
+      }
+      isCompliant = isCompliant(command.get());
+    }
   }
 }
