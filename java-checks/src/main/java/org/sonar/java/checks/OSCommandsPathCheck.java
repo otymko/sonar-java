@@ -40,12 +40,17 @@ import org.sonar.plugins.java.api.tree.VariableTree;
 @Rule(key = "S4036")
 public class OSCommandsPathCheck extends AbstractMethodDetection {
   private static final String STRING_ARRAY_TYPE = "java.lang.String[]";
+  private static final String STRING_TYPE = "java.lang.String";
 
   private static final MethodMatchers EXEC_MATCHER = MethodMatchers.create()
     .ofTypes("java.lang.Runtime")
     .names("exec")
-    .addParametersMatcher("java.lang.String")
+    .addParametersMatcher(STRING_TYPE)
+    .addParametersMatcher(STRING_TYPE, STRING_ARRAY_TYPE)
+    .addParametersMatcher(STRING_TYPE, STRING_ARRAY_TYPE, "java.io.File")
     .addParametersMatcher(STRING_ARRAY_TYPE)
+    .addParametersMatcher(STRING_ARRAY_TYPE, STRING_ARRAY_TYPE)
+    .addParametersMatcher(STRING_ARRAY_TYPE, STRING_ARRAY_TYPE, "java.io.File")
     .build();
 
   private static final List<String> STARTS = Arrays.asList(
@@ -94,7 +99,7 @@ public class OSCommandsPathCheck extends AbstractMethodDetection {
   private boolean isIdentifierCommandValid(IdentifierTree identifier) {
     Symbol symbol = identifier.symbol();
     Type type = symbol.type();
-    if (type.is("java.lang.String")) {
+    if (type.is(STRING_TYPE)) {
       Optional<String> command = identifier.asConstant(String.class);
       return !command.isPresent() || isCompliant(command.get());
     } else if (type.is(STRING_ARRAY_TYPE)) {
