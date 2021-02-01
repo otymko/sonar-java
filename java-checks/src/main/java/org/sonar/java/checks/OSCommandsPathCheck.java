@@ -25,13 +25,17 @@ import java.util.Optional;
 import org.sonar.check.Rule;
 import org.sonar.java.checks.methods.AbstractMethodDetection;
 import org.sonar.plugins.java.api.semantic.MethodMatchers;
+import org.sonar.plugins.java.api.semantic.Symbol;
+import org.sonar.plugins.java.api.semantic.Type;
 import org.sonar.plugins.java.api.tree.Arguments;
 import org.sonar.plugins.java.api.tree.BaseTreeVisitor;
 import org.sonar.plugins.java.api.tree.ExpressionTree;
+import org.sonar.plugins.java.api.tree.IdentifierTree;
 import org.sonar.plugins.java.api.tree.LiteralTree;
 import org.sonar.plugins.java.api.tree.MethodInvocationTree;
 import org.sonar.plugins.java.api.tree.NewArrayTree;
 import org.sonar.plugins.java.api.tree.Tree;
+import org.sonar.plugins.java.api.tree.VariableTree;
 
 @Rule(key = "S4036")
 public class OSCommandsPathCheck extends AbstractMethodDetection {
@@ -82,19 +86,50 @@ public class OSCommandsPathCheck extends AbstractMethodDetection {
         return;
       }
       reportIssue(tree, MESSAGE);
+    } else if (expressionTree.is(Tree.Kind.IDENTIFIER)) {
+      IdentifierTree identifier = (IdentifierTree) expressionTree;
+      Symbol symbol = identifier.symbol();
+      Type type = symbol.type();
+      if (type.is("java.lang.String")) {
+        Optional<String> command = identifier.asConstant(String.class);
+        if (!command.isPresent() || isCompliant(command.get())) {
+          return;
+        }
+        reportIssue(tree, MESSAGE);
+      } else if (type.is("java.lang.String[]")) {
+        Tree declaration = symbol.declaration();
+        if (!declaration.is(Tree.Kind.VARIABLE)) {
+          return;
+        }
+        VariableTree variable = (VariableTree) declaration;
+        ExpressionTree initializer = variable.initializer();
+        if (!initializer.is(Tree.Kind.NEW_ARRAY)) {
+          return;
+        }
+        NewArrayTree newArray = (NewArrayTree) initializer;
+        if (!newArray.symbolType().is("java.lang.String[]")) {
+          return;
+        }
+        NewArrayArgumentVisitor visitor = new NewArrayArgumentVisitor();
+        newArray.accept(visitor);
+        if (visitor.isCompliant) {
+          return;
+        }
+        reportIssue(tree, MESSAGE);
+      }
     }
   }
 
   static class NewArrayArgumentVisitor extends BaseTreeVisitor {
-    private boolean visited = false;
+    private boolean firstArgumentVisited = false;
     private boolean isCompliant = false;
 
     @Override
     public void visitLiteral(LiteralTree tree) {
-      if (visited) {
+      if (firstArgumentVisited) {
         return;
       }
-      visited = true;
+      firstArgumentVisited = true;
       Optional<String> command = tree.asConstant(String.class);
       if (!command.isPresent()) {
         return;
