@@ -39,11 +39,13 @@ import org.sonar.plugins.java.api.tree.VariableTree;
 
 @Rule(key = "S4036")
 public class OSCommandsPathCheck extends AbstractMethodDetection {
+  private static final String STRING_ARRAY_TYPE = "java.lang.String[]";
+
   private static final MethodMatchers EXEC_MATCHER = MethodMatchers.create()
     .ofTypes("java.lang.Runtime")
     .names("exec")
     .addParametersMatcher("java.lang.String")
-    .addParametersMatcher("java.lang.String[]")
+    .addParametersMatcher(STRING_ARRAY_TYPE)
     .build();
 
   private static final List<String> STARTS = Arrays.asList(
@@ -76,48 +78,48 @@ public class OSCommandsPathCheck extends AbstractMethodDetection {
       }
       reportIssue(tree, MESSAGE);
     } else if (expressionTree.is(Tree.Kind.NEW_ARRAY)) {
-      NewArrayTree newArray = (NewArrayTree) expressionTree;
-      if (!newArray.symbolType().is("java.lang.String[]")) {
-        return;
-      }
-      NewArrayArgumentVisitor visitor = new NewArrayArgumentVisitor();
-      newArray.accept(visitor);
-      if (visitor.isCompliant) {
+      if (isNewArrayCommandValid(expressionTree)) {
         return;
       }
       reportIssue(tree, MESSAGE);
     } else if (expressionTree.is(Tree.Kind.IDENTIFIER)) {
       IdentifierTree identifier = (IdentifierTree) expressionTree;
-      Symbol symbol = identifier.symbol();
-      Type type = symbol.type();
-      if (type.is("java.lang.String")) {
-        Optional<String> command = identifier.asConstant(String.class);
-        if (!command.isPresent() || isCompliant(command.get())) {
-          return;
-        }
-        reportIssue(tree, MESSAGE);
-      } else if (type.is("java.lang.String[]")) {
-        Tree declaration = symbol.declaration();
-        if (!declaration.is(Tree.Kind.VARIABLE)) {
-          return;
-        }
-        VariableTree variable = (VariableTree) declaration;
-        ExpressionTree initializer = variable.initializer();
-        if (!initializer.is(Tree.Kind.NEW_ARRAY)) {
-          return;
-        }
-        NewArrayTree newArray = (NewArrayTree) initializer;
-        if (!newArray.symbolType().is("java.lang.String[]")) {
-          return;
-        }
-        NewArrayArgumentVisitor visitor = new NewArrayArgumentVisitor();
-        newArray.accept(visitor);
-        if (visitor.isCompliant) {
-          return;
-        }
-        reportIssue(tree, MESSAGE);
+      if (isIdentifierCommandValid(identifier)) {
+        return;
       }
+      reportIssue(tree, MESSAGE);
     }
+  }
+
+  private boolean isIdentifierCommandValid(IdentifierTree identifier) {
+    Symbol symbol = identifier.symbol();
+    Type type = symbol.type();
+    if (type.is("java.lang.String")) {
+      Optional<String> command = identifier.asConstant(String.class);
+      return !command.isPresent() || isCompliant(command.get());
+    } else if (type.is(STRING_ARRAY_TYPE)) {
+      Tree declaration = symbol.declaration();
+      if (declaration == null || !declaration.is(Tree.Kind.VARIABLE)) {
+        return true;
+      }
+      VariableTree variable = (VariableTree) declaration;
+      ExpressionTree initializer = variable.initializer();
+      if (initializer == null || !initializer.is(Tree.Kind.NEW_ARRAY)) {
+        return true;
+      }
+      return isNewArrayCommandValid(initializer);
+    }
+    return false;
+  }
+
+  private boolean isNewArrayCommandValid(ExpressionTree arrayInitializer) {
+    NewArrayTree newArray = (NewArrayTree) arrayInitializer;
+    if (!newArray.symbolType().is(STRING_ARRAY_TYPE)) {
+      return false;
+    }
+    NewArrayArgumentVisitor visitor = new NewArrayArgumentVisitor();
+    newArray.accept(visitor);
+    return visitor.isCompliant;
   }
 
   static class NewArrayArgumentVisitor extends BaseTreeVisitor {
